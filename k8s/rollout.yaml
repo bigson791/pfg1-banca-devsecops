@@ -1,0 +1,93 @@
+﻿apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: banca-health-check
+  namespace: banca-prod
+spec:
+  metrics:
+    - name: success-rate
+      interval: 5s
+      count: 4
+      successCondition: result == "healthy"
+      failureLimit: 0
+      provider:
+        web:
+          url: "http://banca-core-svc.banca-prod.svc.cluster.local/healthz"
+          jsonPath: "{$.status}"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: banca-core-api
+  namespace: banca-prod
+  labels:
+    app: banca-core-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: banca-core-api
+  strategy:
+    canary:
+      steps:
+        - setWeight: 50
+        - pause: { duration: 10s }
+        - analysis:
+            templates:
+              - templateName: banca-health-check
+        - setWeight: 100
+  template:
+    metadata:
+      labels:
+        app: banca-core-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: banca-core-api
+          image: acrpfg1banca2026gt.azurecr.io/banca-core-api:v1.0.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: BANK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: banca-runtime-secret
+                  key: BANK_SIGNING_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: secrets-store-inline
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+            - name: tmp-dir
+              mountPath: /tmp
+      volumes:
+        - name: secrets-store-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "azure-kv-banca-secrets"
+        - name: tmp-dir
+          emptyDir: {}

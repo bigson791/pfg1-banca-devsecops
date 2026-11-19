@@ -1,0 +1,35 @@
+# 1. Política Zero Trust: Denegar todo tráfico entrante y saliente por defecto
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: banca-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. Permitir tráfico HTTP al puerto 8080 del core bancario y salida DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-banca-core-traffic
+  namespace: banca-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: banca-core-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
