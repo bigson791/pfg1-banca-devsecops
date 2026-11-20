@@ -94,3 +94,43 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: banca-core-api-monitor
+  namespace: banca-prod
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: banca-core-api
+  namespaceSelector:
+    matchNames:
+      - banca-prod
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 10s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: banca-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: banca-core-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
