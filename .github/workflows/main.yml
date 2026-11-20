@@ -1,0 +1,98 @@
+name: Pipeline DevSecOps - Banca Core API
+
+on:
+  pull_request:
+    branches: [ "dev", "main" ]
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  ACR_NAME: acrpfg1banca2026gt
+  IMAGE_NAME: banca-core-api
+  AKS_RESOURCE_GROUP: rg-pfg1-banca-devsecops
+  AKS_CLUSTER_NAME: aks-pfg1-banca-2026
+  NAMESPACE: banca-prod
+
+jobs:
+  analisis-seguridad-devsecops:
+    name: 1. SAST, Dependencias, IaC y Trivy Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar escaneres (Semgrep, pip-audit, Checkov)
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep pip-audit checkov
+
+      - name: 1. SAST - Analisis estatico de codigo Python (Semgrep)
+        run: semgrep --config auto --error app/
+
+      - name: 2. SCA - Auditoria de librerias vulnerables (pip-audit)
+        run: pip-audit -r app/requirements.txt
+
+      - name: 3. IaC Security - Escaneo de manifiestos Kubernetes y Terraform (Checkov)
+        run: checkov -d k8s/ -d terraform/ --quiet --soft-fail
+
+      - name: Construir imagen Docker local para escaneo
+        run: |
+          IMAGE_TAG=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker build -f app/Dockerfile -t $IMAGE_TAG app/
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: 4. Container Security - Escaneo de vulnerabilidades con Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_TAG }}
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+
+      - name: Iniciar sesion en Azure (solo en push a main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Subir imagen verificada a ACR (solo en push a main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+          docker push ${{ env.IMAGE_TAG }}
+
+  despliegue-canary-aks:
+    name: 2. Despliegue Progresivo en AKS (Argo Rollouts)
+    needs: analisis-seguridad-devsecops
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Iniciar sesion en Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Obtener credenciales de AKS
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+      - name: Instalar plugin kubectl-argo-rollouts
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x ./kubectl-argo-rollouts-linux-amd64
+          sudo mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      - name: Actualizar imagen en Argo Rollouts (Inicia Canary)
+        run: |
+          IMAGE_TAG=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          kubectl argo rollouts set image banca-core-api banca-core-api=$IMAGE_TAG -n ${{ env.NAMESPACE }}
