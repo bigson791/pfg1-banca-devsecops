@@ -11,7 +11,7 @@ env:
   ACR_NAME: acrpfg1banca2026gt
   IMAGE_NAME: banca-core-api
   AKS_RESOURCE_GROUP: rg-pfg1-banca-devsecops
-  AKS_CLUSTER_NAME: aks-pfg1-banca-2026
+  AKS_CLUSTER_NAME: aks-pfg1-banca
   NAMESPACE: banca-prod
 
 jobs:
