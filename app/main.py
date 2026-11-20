@@ -66,6 +66,7 @@ def procesar_transferencia(tx: TransferRequest):
         "moneda": tx.moneda,
         "firma_integridad_activa": DB_SIGNING_KEY != "unconfigured-dev-key"
     }
+#test
 
 @app.get("/metrics")
 def metrics():

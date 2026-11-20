@@ -1,0 +1,50 @@
+﻿---
+- name: Hardening y Auditoria Zero Trust en AKS (banca-prod)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: 1. Aplicar etiquetas Pod Security Admission (restricted) en banca-prod
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: banca-prod
+            labels:
+              pod-security.kubernetes.io/enforce: restricted
+              pod-security.kubernetes.io/audit: restricted
+              pod-security.kubernetes.io/warn: restricted
+
+    - name: 2. Garantizar politica Zero Trust default-deny-all
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: default-deny-all
+            namespace: banca-prod
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+
+    - name: 3. Auditar estado del Rollout banca-core-api
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Rollout
+        name: banca-core-api
+        namespace: banca-prod
+      register: rollout_status
+
+    - name: 4. Validar cumplimiento de disponibilidad y replicas saludables
+      ansible.builtin.assert:
+        that:
+          - rollout_status.resources | length > 0
+          - rollout_status.resources[0].status.readyReplicas >= 2
+        success_msg: "CUMPLIMIENTO VERIFICADO: Pod Security restricted, Zero Trust y 2 replicas activas."
+        fail_msg: "FALLO DE CUMPLIMIENTO: El rollout no cumple con las replicas minimas."
